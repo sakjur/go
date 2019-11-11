@@ -272,6 +272,56 @@ func TestDecryptOAEP(t *testing.T) {
 	}
 }
 
+func TestPrivateKeyDecryptOAEP(t *testing.T) {
+	n := new(big.Int)
+	d := new(big.Int)
+	for i, test := range testEncryptOAEPData {
+		n.SetString(test.modulus, 16)
+		d.SetString(test.d, 16)
+		private := new(PrivateKey)
+		private.PublicKey = PublicKey{n, test.e}
+		private.D = d
+
+		for j, message := range test.msgs {
+			out, err := private.Decrypt(nil, message.out, &OAEPOptions{
+				Hash: crypto.SHA1,
+			})
+			if err != nil {
+				t.Errorf("#%d,%d error: %s", i, j, err)
+			} else if !bytes.Equal(out, message.in) {
+				t.Errorf("#%d,%d bad result: %#v (want %#v)", i, j, out, message.in)
+			}
+		}
+		if testing.Short() {
+			break
+		}
+	}
+}
+
+func TestPrivateKeyDecryptOAEPCustomMaskAlgorithm(t *testing.T) {
+	n := new(big.Int)
+	d := new(big.Int)
+
+	test := testDecryptOAEPDataDifferentDigestAndMGF
+	n.SetString(test.modulus, 16)
+	d.SetString(test.d, 16)
+	private := new(PrivateKey)
+	private.PublicKey = PublicKey{n, test.e}
+	private.D = d
+
+	for i, message := range test.msgs {
+		out, err := private.Decrypt(nil, message.out, &OAEPOptions{
+			Hash:     crypto.SHA256,
+			MaskHash: crypto.SHA1,
+		})
+		if err != nil {
+			t.Errorf("#%d error: %s", i, err)
+		} else if !bytes.Equal(out, message.in) {
+			t.Errorf("#%d,%d bad result: %#v (want %#v)", i, i, out, message.in)
+		}
+	}
+}
+
 // testEncryptOAEPData contains a subset of the vectors from RSA's "Test vectors for RSA-OAEP".
 var testEncryptOAEPData = []testEncryptOAEPStruct{
 	// Key 1
@@ -415,6 +465,28 @@ var testEncryptOAEPData = []testEncryptOAEPStruct{
 					0x84, 0xeb, 0x42, 0x9f, 0xcc,
 				},
 			},
+		},
+	},
+}
+
+var testDecryptOAEPDataDifferentDigestAndMGF = testEncryptOAEPStruct{
+	"a8b3b284af8eb50b387034a860f146c4919f318763cd6c5598c8ae4811a1e0abc4c7e0b082d693a5e7fced675cf4668512772c0cbc64a742c6c630f533c8cc72f62ae833c40bf25842e984bb78bdbf97c0107d55bdb662f5c4e0fab9845cb5148ef7392dd3aaff93ae1e6b667bb3d4247616d4f5ba10d4cfd226de88d39f16fb",
+	65537,
+	"53339cfdb79fc8466a655c7316aca85c55fd8f6dd898fdaf119517ef4f52e8fd8e258df93fee180fa0e4ab29693cd83b152a553d4ac4d1812b8b9fa5af0e7f55fe7304df41570926f3311f15c4d65a732c483116ee3d3d2d0af3549ad9bf7cbfb78ad884f84d5beb04724dc7369b31def37d0cf539e9cfcdd3de653729ead5d1",
+	[]testEncryptOAEPMessage{
+		{
+			[]byte{0x66, 0x28, 0x19, 0x4e, 0x12, 0x07, 0x3d, 0xb0,
+				0x3b, 0xa9, 0x4c, 0xda, 0x9e, 0xf9, 0x53, 0x23, 0x97,
+				0xd5, 0x0d, 0xba, 0x79, 0xb9, 0x87, 0x00, 0x4a, 0xfe,
+				0xfe, 0x34,
+			},
+			[]byte{0x18, 0xb7, 0x76, 0xea, 0x21, 0x06, 0x9d, 0x69,
+				0x77, 0x6a, 0x33, 0xe9, 0x6b, 0xad, 0x48, 0xe1, 0xdd,
+				0xa0, 0xa5, 0xef, 0x47, 0xe1, 0xab, 0x71, 0x19, 0xfe,
+				0xe5, 0x6c, 0x95, 0xee, 0x5e, 0xaa, 0xd8, 0x6f, 0x40,
+				0xd0, 0xaa, 0x63, 0xbd, 0x33,
+			},
+			fromHex("692bdad80db9456d9feff64527da3c9076536854e81ef1aabb67b7b40eefd0b59bd60023d8fb9866bdaa8f6104f40417e364dbb4a74e2d860027d6ca9bf990d81b9a4e36eb44fb6ee9d1949250109416211db47391ef75715a530dc8d6e7018bcd5c8d386a4cf76121b82028fcd53372302eb154f0d4386331cc9c8f683a41d6"),
 		},
 	},
 }

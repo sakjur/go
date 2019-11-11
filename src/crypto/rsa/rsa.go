@@ -53,8 +53,12 @@ func (pub *PublicKey) Size() int {
 // OAEPOptions is an interface for passing options to OAEP decryption using the
 // crypto.Decrypter interface.
 type OAEPOptions struct {
-	// Hash is the hash function that will be used when generating the mask.
+	// Hash is the hash function that will be used as random oracle for the
+	// digest operation.
 	Hash crypto.Hash
+	// MaskHash overrides the random oracle for the mask generating function
+	// if set (defaults to Hash).
+	MaskHash crypto.Hash
 	// Label is an arbitrary byte string that must be equal to the value
 	// used when encrypting.
 	Label []byte
@@ -125,7 +129,12 @@ func (priv *PrivateKey) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.D
 
 	switch opts := opts.(type) {
 	case *OAEPOptions:
-		return DecryptOAEP(opts.Hash.New(), rand, priv, ciphertext, opts.Label)
+		digestOracle := opts.Hash.New()
+		maskOracle := digestOracle
+		if opts.MaskHash != 0 {
+			maskOracle = opts.MaskHash.New()
+		}
+		return decryptOAEP(digestOracle, maskOracle, rand, priv, ciphertext, opts.Label)
 
 	case *PKCS1v15DecryptOptions:
 		if l := opts.SessionKeyLen; l > 0 {
@@ -567,12 +576,16 @@ func decryptAndCheck(random io.Reader, priv *PrivateKey, c *big.Int) (m *big.Int
 // The label parameter must match the value given when encrypting. See
 // EncryptOAEP for details.
 func DecryptOAEP(hash hash.Hash, random io.Reader, priv *PrivateKey, ciphertext []byte, label []byte) ([]byte, error) {
+	return decryptOAEP(hash, hash, random, priv, ciphertext, label)
+}
+
+func decryptOAEP(digestHash hash.Hash, maskHash hash.Hash, random io.Reader, priv *PrivateKey, ciphertext []byte, label []byte) ([]byte, error) {
 	if err := checkPub(&priv.PublicKey); err != nil {
 		return nil, err
 	}
 	k := priv.Size()
 	if len(ciphertext) > k ||
-		k < hash.Size()*2+2 {
+		k < digestHash.Size()*2+2 {
 		return nil, ErrDecryption
 	}
 
@@ -583,9 +596,9 @@ func DecryptOAEP(hash hash.Hash, random io.Reader, priv *PrivateKey, ciphertext 
 		return nil, err
 	}
 
-	hash.Write(label)
-	lHash := hash.Sum(nil)
-	hash.Reset()
+	digestHash.Write(label)
+	lHash := digestHash.Sum(nil)
+	digestHash.Reset()
 
 	// Converting the plaintext number to bytes will strip any
 	// leading zeros so we may have to left pad. We do this unconditionally
@@ -596,13 +609,13 @@ func DecryptOAEP(hash hash.Hash, random io.Reader, priv *PrivateKey, ciphertext 
 
 	firstByteIsZero := subtle.ConstantTimeByteEq(em[0], 0)
 
-	seed := em[1 : hash.Size()+1]
-	db := em[hash.Size()+1:]
+	seed := em[1 : digestHash.Size()+1]
+	db := em[digestHash.Size()+1:]
 
-	mgf1XOR(seed, hash, db)
-	mgf1XOR(db, hash, seed)
+	mgf1XOR(seed, maskHash, db)
+	mgf1XOR(db, maskHash, seed)
 
-	lHash2 := db[0:hash.Size()]
+	lHash2 := db[0:digestHash.Size()]
 
 	// We have to validate the plaintext in constant time in order to avoid
 	// attacks like: J. Manger. A Chosen Ciphertext Attack on RSA Optimal
@@ -617,7 +630,7 @@ func DecryptOAEP(hash hash.Hash, random io.Reader, priv *PrivateKey, ciphertext 
 	//   invalid: 1 iff we saw a non-zero byte before the 0x01.
 	var lookingForIndex, index, invalid int
 	lookingForIndex = 1
-	rest := db[hash.Size():]
+	rest := db[digestHash.Size():]
 
 	for i := 0; i < len(rest); i++ {
 		equals0 := subtle.ConstantTimeByteEq(rest[i], 0)
